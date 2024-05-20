@@ -2,13 +2,15 @@ from setuptools import setup, find_packages
 
 setup(
     name='pairmap',
-    version='0.1',
+    version="0.11",
     packages=find_packages(),
     install_requires=[
         'rdkit',
-        'lomap',
-        'argparse',
-        'networkx'
+        'lomap2',
+        'networkx',
+        'numpy',
+        'rdkit>=2021.03.1',
+        'tqdm',
     ],
     author='Furui K',
     author_email='furui@li.c.titech.ac.jp',

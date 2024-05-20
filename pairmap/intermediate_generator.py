@@ -11,11 +11,16 @@ CARBON_ATOM = Chem.Atom(6)
 
 class IntermediateGenerator:
     def __init__(self, is_atom_modfication_enabled = True, cap_ring_with_carbon = True, cap_ring_with_hydrogen = True, verbose = False):
-        self.is_atom_modfication_enabled = is_atom_modfication_enabled
-
+        '''
+        :param is_atom_modfication_enabled: Whether to enable atom modification.
+        :param cap_ring_with_carbon: Whether to cap rings with carbon atoms.
+        :param cap_ring_with_hydrogen: Whether to cap rings with hydrogen atoms.
+        :param verbose: Whether to print verbose output.
+        '''
         if not cap_ring_with_carbon and not cap_ring_with_hydrogen:
             raise ValueError('At least one of the options cap_ring_with_carbon and cap_ring_with_hydrogen must be True.')
 
+        self.is_atom_modfication_enabled = is_atom_modfication_enabled
         self.cap_ring_with_carbon = cap_ring_with_carbon
         self.cap_ring_with_hydrogen = cap_ring_with_hydrogen
         self.verbose = verbose
@@ -54,11 +59,10 @@ class IntermediateGenerator:
         return indices[0] if len(indices)==1 else None
 
     def get_terminal_rings(self, rings):
-        '''
-        Identify rings with exactly one neighboring atom outside the ring.
+        '''Identify rings with exactly one neighboring atom outside the ring.
 
-        :param rings: List of rings, where each ring is a list of atom indices.
-        :return: List of rings each having exactly one neighbor outside the ring.
+        # :param rings: List of rings, where each ring is a list of atom indices.
+        # :return: List of rings each having exactly one neighbor outside the ring.
         '''
 
         ligand = self.source_ligand
@@ -321,6 +325,12 @@ class IntermediateGenerator:
 
 
     def generate_intermediates(self, source_ligand, target_ligand, mcs_map):
+        '''Generate intermediates for transforming the source ligand into the target ligand.
+        :param source_ligand: RDKit molecule object of the source ligand.
+        :param target_ligand: RDKit molecule object of the target ligand.
+        :param mcs_map: Dictionary mapping atom indices in the source ligand to the target ligand.
+        :return: List of RDKit molecule objects generated as intermediates.
+        '''
 
         # preprocess ligands
         self.source_ligand = source_ligand
@@ -332,10 +342,10 @@ class IntermediateGenerator:
         # Extract atoms and rings eligible for modification or deletion
         atoms_for_modification, atoms_for_deletion, rings_for_deletion, fused_rings_for_deletion = self.extract_atoms_for_modification_and_deletion()
         if self.verbose:
-            print([atom.GetIdx() for atom in atoms_for_modification])
-            print([atom.GetIdx() for atom in atoms_for_deletion])
-            print([[atom.GetIdx() for atom in ring] for ring in rings_for_deletion])
-            print([[atom.GetIdx() for atom in ring] for ring in fused_rings_for_deletion])
+            print('atoms_for_modification:', len(atoms_for_modification))
+            print('atoms_for_deletion:', len(atoms_for_deletion))
+            print('rings_for_deletion:', len(rings_for_deletion))
+            print('fused_rings_for_deletion:', len(fused_rings_for_deletion))
         # Convert atoms and rings to their map numbers
         atom_map_nums_for_modification = [atom.GetAtomMapNum() for atom in atoms_for_modification]
         atom_map_nums_for_deletion = [atom.GetAtomMapNum() for atom in atoms_for_deletion]

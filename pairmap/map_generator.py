@@ -1,90 +1,95 @@
+from .utils import find_bridges
+from .utils.mcs import get_score_matrix
 
-from rdkit import Chem
-from rdkit.Chem import AllChem, Draw
-import os
 import numpy as np
+import os
+import itertools
+
 import networkx as nx
 from tqdm import tqdm
 
-from utils import find_bridges
-
 import logging
 
-class IntermediateMapper:
-    def __init__(self, intermediate_dict, intermediate_traces, options):
-        self.intermediate_dict = intermediate_dict
-        self.intermediate_names = list(intermediate_dict.keys())
-        self.intermediate_traces = intermediate_traces
+class MapGenerator:
+    def __init__(self, intermediate_list, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, chunkScale = 10, source_node_index = 0, target_node_index = 1, jobs = 0):
+        """
+        :param intermediate_list: List of RDKit molecules representing intermediates
+        :param maxPathLength: Maximum path length of the pairmap (default: 4)
+        :param cycleLength: Maximum cycle length of the pairmap (default: 3)
+        :param maxOptimalPathLength: Maximum path length of the optimal path (default: 3)
+        :param roughMaxPathLength: Maximum path length of the rough search (default: 2)
+        :param roughScoreThreshold: Score threshold of the rough search (default: 0.5)
+        :param minScoreThreshold: Minimum score threshold (default: 0.2)
+        :param chunkScale: Parameter for chunk processing in the map generation (default: 10)
+        :param source_node_index: source node index in the intermediate list (default: 0)
+        :param target_node_index: target node index in the intermediate list (default: 1)
+        """
+        self.intermediate_list = intermediate_list
+        self.intermediate_names = [intermediate.GetProp('_Name') if intermediate.HasProp('_Name')==1  else f'intermediate-{i:04d}' for i, intermediate in enumerate(intermediate_list)]
 
-        self.source_node = 0
-        self.target_node = 1
-        self.options = options
+        self.score_matrix = None
+        self.N = len(self.intermediate_list)
+        self.jobs = jobs
+
+        self.source_node_index = source_node_index
+        self.target_node_index = target_node_index
 
         # Optimal path parameters
-        self.maxOptimalPathLength = options.maxOptimalPathLength
-        self.roughtMaxPathLength = options.roughtMaxPathLength
+        self.maxOptimalPathLength = maxOptimalPathLength
+        self.roughMaxPathLength = roughMaxPathLength
+        self.roughScoreThreshold = roughScoreThreshold
 
         # Pairmap parameters
-        self.cycleLength = options.cycleLength
-        self.maxPathLength = options.maxPathLength
-        self.chunkScale = options.chunkScale
-        self.minScoreThreshold = options.minScoreThreshold
-
-        self.image_dir = options.image_dir
+        self.cycleLength = cycleLength
+        self.maxPathLength = maxPathLength
+        self.chunkScale = chunkScale
+        self.minScoreThreshold = minScoreThreshold
 
     def make_graph(self, min_score):
         graph = nx.Graph()
-        for i, key in enumerate(self.intermediate_dict):
-            imagefile=os.path.join(self.image_dir,key+'.png')
+        for i, name in enumerate(self.intermediate_names):
             graph.add_node(i)
-            graph.nodes[i]['label'] = key
-            graph.nodes[i]['image'] = imagefile
+            graph.nodes[i]['label'] = name
             # set edges
-            for u, v, score in self.intermediate_traces:
+            for u, v in itertools.combinations(range(self.N), 2):
+                score = self.score_matrix[u][v]
                 round_score = np.round(score, decimals=2)
                 if round_score >= min_score:
                     graph.add_edge(u, v, score=round_score)
         return graph
 
     def find_optimal_path(self):
+        # rough search
+        # find a path with a score above the roughScoreThreshold (e.g. roughScoreThreshold=0.5 and legnth below roughMaxPathLength=2)
         graph = self.make_graph(self.roughScoreThreshold)
-        source_node, target_node = self.source_node, self.target_node
-        has_path = nx.has_path(graph, source_node, target_node)
+        source_node_index, target_node_index = self.source_node_index, self.target_node_index
+        has_path = nx.has_path(graph, source_node_index, target_node_index)
         if has_path:
-            path_length = nx.shortest_path_length(graph, source_node, target_node)
-            if path_length > self.roughtMaxPathLength:
+            path_length = nx.shortest_path_length(graph, source_node_index, target_node_index)
+            if path_length > self.roughMaxPathLength:
                 has_path = False
         if not has_path:
             graph = self.make_graph(self.minScoreThreshold)
-            has_path = nx.has_path(graph, source_node, target_node)
+            has_path = nx.has_path(graph, source_node_index, target_node_index)
             if not has_path:
                 raise Exception('No path found, please check the input.')
 
-        all_simple_paths = list(nx.all_simple_paths(graph, source_node, target_node, cutoff=self.maxOptimalPathLength))
+        # find the optimal path
+        # find the path with the highest score
+
+        all_simple_paths = list(nx.all_simple_paths(graph, source_node_index, target_node_index, cutoff=self.maxOptimalPathLength))
 
         path_scores_list = []
-        for i, path in enumerate(all_simple_paths):
+        for path in all_simple_paths:
             path_scores = [graph.get_edge_data(path[i],path[i+1])['score'] for i in range(len(path)-1)]
             path_scores_list.append(sorted(path_scores))
 
-        sorted_indices = sorted(enumerate(path_scores_list), key=lambda x: [min(x[1]), len(x[1])], reverse=True)
-        argsort_indices = [index for index, _ in sorted_indices]
-        sorted_path_scores_list = [value for _, value in sorted_indices]
-        max_score = -np.inf
-        max_path_scores = None
-        min_dist = np.inf
-        for i, path_scores in enumerate(sorted_path_scores_list):
-            dist = len(path_scores)
-            score=min(path_scores)
-            if score>=max_score:
-                if dist < min_dist or score>max_score or path_scores>max_path_scores:
-                    max_score = score
-                    max_path_scores = path_scores
-                    min_dist = dist
-                    best_idx = argsort_indices[i]
+        sum_scores = [np.sum(1/np.array(scores)) for scores in path_scores_list]
+        best_idx = np.argmin(sum_scores)
         found_path = all_simple_paths[best_idx]
         self.found_path = found_path
         self.found_links = [(found_path[i], found_path[i+1]) if found_path[i]<found_path[i+1] else (found_path[i+1], found_path[i]) for i in range(len(found_path)-1)]
+
         return self.found_path
 
     def get_cycled_nodes(self, graph):
@@ -129,7 +134,7 @@ class IntermediateMapper:
         return subgraph
 
     def get_reachable_subgraph(self, graph):
-        all_simple_paths = list(nx.all_simple_paths(graph, self.source_node, self.target_node, cutoff = self.maxPathLength))
+        all_simple_paths = list(nx.all_simple_paths(graph, self.source_node_index, self.target_node_index, cutoff = self.maxPathLength))
         unique_nodes = set()
         unique_nodes.update(self.found_path)
         for path in all_simple_paths:
@@ -197,8 +202,8 @@ class IntermediateMapper:
                         break
             return True
 
-    # Check constraints by chunk
     def check_chunk(self, edge_chunk, data_chunk):
+        '''Check constraints by chunk'''
         subgraph = self.tmp_subgraph
         removables = [d['score'] < 1.0 and not d['found_path'] for d in data_chunk]
         if not all(removables):
@@ -229,7 +234,16 @@ class IntermediateMapper:
             self.tmp_subgraph = subgraph
             return True
 
+    def get_score_matrix(self):
+        '''Get score matrix from intermediate list'''
+        if self.score_matrix is None:
+            self.score_matrix = get_score_matrix(self.intermediate_list, jobs=self.jobs)
+        return self.score_matrix
+
     def build_map(self):
+        '''Map generation'''
+        score_matrix = self.get_score_matrix()
+        found_path = self.find_optimal_path()
         subgraph = self.generate_initial_graph()
 
         self.scoresList = list(subgraph.edges(data='score'))
@@ -239,7 +253,6 @@ class IntermediateMapper:
         data = [subgraph[i][j] for i, j, d in self.scoresList]
         chunk_size = self.chunkScale **int(np.log(len(self.scoresList))/np.log(self.chunkScale))
 
-        found_path = self.found_path
         self.initialCycledNodesSet = self.get_cycled_nodes(subgraph)
         self.initialCycledEdgesSet = self.get_cycled_edges(subgraph)
 
@@ -252,6 +265,7 @@ class IntermediateMapper:
         else:
             subgraph = exgraph.copy()
 
+        logging.info('Build map with subgraphing')
         self.tmp_subgraph = subgraph
         crt=0
         while crt < len(data):
@@ -266,6 +280,7 @@ class IntermediateMapper:
                 crt+=1
             self.chunk_process(edge_chunk, data_chunk, chunk_size, crt)
 
+        logging.info('Rebuild graph with no subgraphing')
         tmp_graph = self.tmp_subgraph.copy()
         self.scoresList = list(tmp_graph.edges(data='score'))
         self.scoresList.sort(key=lambda entry: entry[2])

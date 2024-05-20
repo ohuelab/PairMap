@@ -1,4 +1,4 @@
-from .pairmap import Mapper
-
-__version__ = '0.1'
+from .search_intermediates import SearchIntermediates
+from .map_generator import MapGenerator
+from .intermediate_generator import IntermediateGenerator
 

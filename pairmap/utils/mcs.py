@@ -1,7 +1,12 @@
-import argparse
+import numpy as np
+import itertools
 from lomap.mcs import MCS
-from rdkit import Chem
 from rdkit.Chem import rdFMCS
+
+from tqdm import tqdm
+
+from multiprocessing import Pool
+
 
 
 def formal_charge(mol):
@@ -28,7 +33,7 @@ def ecr(mol_i, mol_j):
 
     return scr_ecr
 
-def score_function(mola,molb, options = None):
+def score_function(mola, molb, options = None):
     """Calculate the score of two molecules based on various rules.
 
     Args:
@@ -51,3 +56,56 @@ def score_function(mola,molb, options = None):
     tmp_scr *= MC.transmuting_methyl_into_ring_rule()
     tmp_scr *= MC.transmuting_ring_sizes_rule()
     return MC, tmp_scr
+
+
+def compute_score(pair):
+    i, j, mols, options = pair
+    try:
+        _, score = score_function(mols[i], mols[j], options)
+    except:
+        _, score = score_function(mols[i], mols[j], options)
+    return i, j, score
+
+
+def get_score_matrix(mols, options = None, use_seed = True, jobs = 1):
+    if options is None:
+        options = {}
+    if use_seed:
+        mcs = calc_mcs(mols)
+        seedSmarts = mcs.smartsString
+    else:
+        seedSmarts = ""
+
+    N=len(mols)
+    score_matrix = np.zeros((N, N))
+    pairs = [(i, j, mols, {**options, "seed": seedSmarts}) for i, j in itertools.combinations(range(N), 2)]
+
+    if jobs == 1 or jobs == 0:
+        for i, j, score in tqdm(map(compute_score, pairs), total=len(pairs)):
+            score_matrix[i][j]=score
+            score_matrix[j][i]=score
+    else:
+        if jobs < 0:
+            jobs = None
+        with Pool(jobs) as pool:
+            for i, j, score in tqdm(pool.imap_unordered(compute_score, pairs), total=len(pairs)):
+                score_matrix[i][j]=score
+                score_matrix[j][i]=score
+
+    # with Pool() as pool:
+    #     for i, j, score in tqdm(pool.imap_unordered(compute_score, pairs), total=len(pairs)):
+    #         score_matrix[i][j]=score
+    #         score_matrix[j][i]=score
+    return score_matrix
+
+
+def calc_mcs(mols):
+    mcs = rdFMCS.FindMCS(mols,
+                    timeout=1200,
+                    atomCompare=rdFMCS.AtomCompare.CompareAny,
+                    bondCompare=rdFMCS.BondCompare.CompareAny,
+                    matchValences=False,
+                    ringMatchesRingOnly=True,
+                    completeRingsOnly=True,
+                    matchChiralTag=False)
+    return mcs
