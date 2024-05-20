@@ -6,7 +6,6 @@ setup(
     packages=find_packages(),
     install_requires=[
         'rdkit',
-        'lomap2',
         'networkx',
         'numpy',
         'rdkit>=2021.03.1',
