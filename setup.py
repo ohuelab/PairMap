@@ -5,11 +5,11 @@ setup(
     version="0.11",
     packages=find_packages(),
     install_requires=[
-        'rdkit',
         'networkx',
         'numpy',
         'rdkit>=2021.03.1',
         'tqdm',
+        'lomap2'
     ],
     author='Furui K',
     author_email='furui@li.c.titech.ac.jp',

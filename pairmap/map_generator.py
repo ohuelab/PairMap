@@ -8,10 +8,9 @@ import itertools
 import networkx as nx
 from tqdm import tqdm
 
-import logging
 
 class MapGenerator:
-    def __init__(self, intermediate_list, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, chunkScale = 10, source_node_index = 0, target_node_index = 1, jobs = 0):
+    def __init__(self, intermediate_list, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, chunkScale = 10, source_node_index = 0, target_node_index = 1, jobs = 0, custum_score_matrix = None, verbose = False):
         """
         :param intermediate_list: List of RDKit molecules representing intermediates
         :param maxPathLength: Maximum path length of the pairmap (default: 4)
@@ -23,13 +22,25 @@ class MapGenerator:
         :param chunkScale: Parameter for chunk processing in the map generation (default: 10)
         :param source_node_index: source node index in the intermediate list (default: 0)
         :param target_node_index: target node index in the intermediate list (default: 1)
+        :param jobs: Number of jobs for parallel processing (default: 0)
+        :param custum_score_matrix: original score matrix, if None, the score matrix is calculated from the intermediate list (default: None)
+        :param verbose: verbose mode (default: False)
         """
         self.intermediate_list = intermediate_list
         self.intermediate_names = [intermediate.GetProp('_Name') if intermediate.HasProp('_Name')==1  else f'intermediate-{i:04d}' for i, intermediate in enumerate(intermediate_list)]
 
-        self.score_matrix = None
+        if custum_score_matrix is not None:
+            # check custum_score_matrix is square matrix
+            if len(custum_score_matrix) != len(intermediate_list):
+                raise Exception('The size of the custom score matrix does not match the intermediate list.')
+            if len(custum_score_matrix[0]) != len(intermediate_list):
+                raise Exception('The custom score matrix must be a square matrix, but the size is {}x{}'.format(len(custum_score_matrix), len(custum_score_matrix[0])))
+            self.score_matrix = custum_score_matrix
+        else:
+            self.score_matrix = None
         self.N = len(self.intermediate_list)
         self.jobs = jobs
+        self.verbose = verbose
 
         self.source_node_index = source_node_index
         self.target_node_index = target_node_index
@@ -45,7 +56,12 @@ class MapGenerator:
         self.chunkScale = chunkScale
         self.minScoreThreshold = minScoreThreshold
 
-    def make_graph(self, min_score):
+        self.found_path = [source_node_index, target_node_index]
+        self.found_links = [(source_node_index, target_node_index)]
+
+    def make_graph(self, min_score = None):
+        if min_score is None:
+            min_score = self.minScoreThreshold
         graph = nx.Graph()
         for i, name in enumerate(self.intermediate_names):
             graph.add_node(i)
@@ -66,19 +82,14 @@ class MapGenerator:
         has_path = nx.has_path(graph, source_node_index, target_node_index)
         if has_path:
             path_length = nx.shortest_path_length(graph, source_node_index, target_node_index)
-            if path_length > self.roughMaxPathLength:
-                has_path = False
-        if not has_path:
-            graph = self.make_graph(self.minScoreThreshold)
-            has_path = nx.has_path(graph, source_node_index, target_node_index)
-            if not has_path:
-                raise Exception('No path found, please check the input.')
+            if path_length <= self.roughMaxPathLength:
+                print("Warning: Found a path with a score above the roughScoreThreshold and a length below the roughMaxPathLength.")
+                print("Less need to introduce pairmap")
 
-        # find the optimal path
-        # find the path with the highest score
-
+        graph = self.make_graph()
         all_simple_paths = list(nx.all_simple_paths(graph, source_node_index, target_node_index, cutoff=self.maxOptimalPathLength))
-
+        if len(all_simple_paths) == 0:
+            raise Exception('No path found, please check the input.')
         path_scores_list = []
         for path in all_simple_paths:
             path_scores = [graph.get_edge_data(path[i],path[i+1])['score'] for i in range(len(path)-1)]
@@ -160,7 +171,7 @@ class MapGenerator:
         return subgraph
 
     def generate_initial_graph(self):
-        graph = self.make_graph(self.minScoreThreshold)
+        graph = self.make_graph()
         for u,v in graph.edges:
             graph[u][v]['found_path']=False
         for i in range(len(self.found_path)-1):
@@ -179,7 +190,8 @@ class MapGenerator:
             return False
         else:
             # Re-split when there are multiple chunks
-            logging.info('Split: #E={}, {} {}'.format(len(subgraph.edges()), idx, idx + chunk_size))
+
+            print('Split: #E={}, {} {}'.format(len(subgraph.edges()), idx, idx + chunk_size))
             # Run chunk_process recursively with smaller chunks
             chunk_size = max(chunk_size // self.chunkScale, 1)
             crt=0
@@ -208,7 +220,8 @@ class MapGenerator:
         removables = [d['score'] < 1.0 and not d['found_path'] for d in data_chunk]
         if not all(removables):
             if not any(removables):
-                logging.info('Skip (score=1.0): {}'.format(len(edge_chunk)))
+
+                print('Skip (score=1.0): {}'.format(len(edge_chunk)))
                 return True
             # Restore edges because they contain edges that cannot be removed
             return False
@@ -228,9 +241,11 @@ class MapGenerator:
                 for (i, j), d in zip(edge_chunk, data_chunk):
                     subgraph.add_edge(i, j, **d)
                 return False
-            logging.info('Removed: {}'.format(len(edge_chunk)))
+            if self.verbose:
+                print('Removed: {}'.format(len(edge_chunk)))
             subgraph = exgraph.copy()
-            logging.info('#E={}, #N={}'.format(len(subgraph.edges()), len(subgraph)))
+            if self.verbose:
+                print('#E={}, #N={}'.format(len(subgraph.edges()), len(subgraph)))
             self.tmp_subgraph = subgraph
             return True
 
@@ -265,7 +280,8 @@ class MapGenerator:
         else:
             subgraph = exgraph.copy()
 
-        logging.info('Build map with subgraphing')
+        if self.verbose:
+            print('Build map with subgraphing')
         self.tmp_subgraph = subgraph
         crt=0
         while crt < len(data):
@@ -280,7 +296,8 @@ class MapGenerator:
                 crt+=1
             self.chunk_process(edge_chunk, data_chunk, chunk_size, crt)
 
-        logging.info('Rebuild graph with no subgraphing')
+        if self.verbose:
+            print('Rebuild graph with no subgraphing')
         tmp_graph = self.tmp_subgraph.copy()
         self.scoresList = list(tmp_graph.edges(data='score'))
         self.scoresList.sort(key=lambda entry: entry[2])
