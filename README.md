@@ -4,6 +4,10 @@ PairMap is a comprehensive tool for the calculation of relative binding free ene
 
 ## Installation
 
+```bash
+conda install -c conda-forge lomap2
+pip install .
+```
 
 ## Dependencies
 

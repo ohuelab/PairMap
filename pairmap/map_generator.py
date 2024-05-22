@@ -6,13 +6,13 @@ import os
 import itertools
 
 import networkx as nx
-from tqdm import tqdm
 
 
 class MapGenerator:
-    def __init__(self, intermediate_list, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, chunkScale = 10, source_node_index = 0, target_node_index = 1, jobs = 0, custum_score_matrix = None, verbose = False):
+    def __init__(self, intermediate_list, optimal_path_mode = False, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, chunkScale = 10, source_node_index = 0, target_node_index = 1, jobs = 0, custum_score_matrix = None, verbose = False):
         """
         :param intermediate_list: List of RDKit molecules representing intermediates
+        :param optimal_path_mode: Output map contains only the optimal path (default: False)
         :param maxPathLength: Maximum path length of the pairmap (default: 4)
         :param cycleLength: Maximum cycle length of the pairmap (default: 3)
         :param maxOptimalPathLength: Maximum path length of the optimal path (default: 3)
@@ -46,6 +46,7 @@ class MapGenerator:
         self.target_node_index = target_node_index
 
         # Optimal path parameters
+        self.optimal_path_mode = optimal_path_mode
         self.maxOptimalPathLength = maxOptimalPathLength
         self.roughMaxPathLength = roughMaxPathLength
         self.roughScoreThreshold = roughScoreThreshold
@@ -58,6 +59,19 @@ class MapGenerator:
 
         self.found_path = [source_node_index, target_node_index]
         self.found_links = [(source_node_index, target_node_index)]
+
+    def make_optimal_path_graph(self):
+        # graph only contains the optimal path
+        graph = nx.Graph()
+        for i, name in enumerate(self.intermediate_names):
+            if i in self.found_path:
+                graph.add_node(i)
+                graph.nodes[i]['label'] = name
+        for i in range(len(self.found_path)-1):
+            u=self.found_path[i]
+            v=self.found_path[i+1]
+            graph.add_edge(u, v, score=self.score_matrix[u][v])
+        return graph
 
     def make_graph(self, min_score = None):
         if min_score is None:
@@ -190,8 +204,8 @@ class MapGenerator:
             return False
         else:
             # Re-split when there are multiple chunks
-
-            print('Split: #E={}, {} {}'.format(len(subgraph.edges()), idx, idx + chunk_size))
+            if self.verbose:
+                print('Split: #E={}, {} {}'.format(len(subgraph.edges()), idx, idx + chunk_size))
             # Run chunk_process recursively with smaller chunks
             chunk_size = max(chunk_size // self.chunkScale, 1)
             crt=0
@@ -220,8 +234,9 @@ class MapGenerator:
         removables = [d['score'] < 1.0 and not d['found_path'] for d in data_chunk]
         if not all(removables):
             if not any(removables):
-
-                print('Skip (score=1.0): {}'.format(len(edge_chunk)))
+                # Skip if all edges are unremovable
+                if self.verbose:
+                    print('Skip (score=1.0): {}'.format(len(edge_chunk)))
                 return True
             # Restore edges because they contain edges that cannot be removed
             return False
@@ -257,8 +272,23 @@ class MapGenerator:
 
     def build_map(self):
         '''Map generation'''
-        score_matrix = self.get_score_matrix()
+        # calculate score matrix
+        _ = self.get_score_matrix()
+
+        # find optimal path
         found_path = self.find_optimal_path()
+
+        if self.verbose:
+            print('Found path found:', found_path)
+            print('Found links:', self.found_links)
+
+        self.optimal_path_graph = self.make_optimal_path_graph()
+        if self.optimal_path_mode:
+            self.final_graph = self.optimal_path_graph
+            return self.final_graph
+
+        # execute map generation
+
         subgraph = self.generate_initial_graph()
 
         self.scoresList = list(subgraph.edges(data='score'))
@@ -301,7 +331,7 @@ class MapGenerator:
         tmp_graph = self.tmp_subgraph.copy()
         self.scoresList = list(tmp_graph.edges(data='score'))
         self.scoresList.sort(key=lambda entry: entry[2])
-        for u, v, _ in tqdm(self.scoresList):
+        for u, v, _ in self.scoresList:
             edge_data = tmp_graph.get_edge_data(u,v)
             if edge_data == None or edge_data['found_path']:
                 continue

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pairmap',
-    version="0.11",
+    version="0.2",
     packages=find_packages(),
     install_requires=[
         'networkx',

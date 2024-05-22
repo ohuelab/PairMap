@@ -18,6 +18,8 @@ def execute_ligand_preparation(mols, input_file='ligand.sdf', output_file='ligan
     :param charge_indices: charges must be the same as the first molecule.
     :return: A list of prepared molecules.
     """
+    if override:
+        remove_files = False
     if not override and os.path.exists(input_file):
         raise FileExistsError('Input file already exists. Set override=True to overwrite.')
     if not override and os.path.exists(output_file):
