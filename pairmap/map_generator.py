@@ -73,7 +73,7 @@ class MapGenerator:
             graph.add_edge(u, v, score=self.score_matrix[u][v])
         return graph
 
-    def make_graph(self, min_score = None):
+    def make_graph(self, min_score = None, found_links = []):
         if min_score is None:
             min_score = self.minScoreThreshold
         graph = nx.Graph()
@@ -84,7 +84,8 @@ class MapGenerator:
             for u, v in itertools.combinations(range(self.N), 2):
                 score = self.score_matrix[u][v]
                 round_score = np.round(score, decimals=2)
-                if round_score >= min_score:
+                is_found_link = (u,v) in found_links or (v,u) in found_links
+                if round_score >= min_score or is_found_link:
                     graph.add_edge(u, v, score=round_score)
         return graph
 
@@ -109,7 +110,7 @@ class MapGenerator:
             path_scores = [graph.get_edge_data(path[i],path[i+1])['score'] for i in range(len(path)-1)]
             path_scores_list.append(sorted(path_scores))
 
-        sum_scores = [np.sum(1/np.array(scores)) for scores in path_scores_list]
+        sum_scores = [np.sum(1/(np.array(scores)+1e-5)) for scores in path_scores_list]
         best_idx = np.argmin(sum_scores)
         found_path = all_simple_paths[best_idx]
         self.found_path = found_path
@@ -185,7 +186,7 @@ class MapGenerator:
         return subgraph
 
     def generate_initial_graph(self):
-        graph = self.make_graph()
+        graph = self.make_graph(found_links=self.found_links)
         for u,v in graph.edges:
             graph[u][v]['found_path']=False
         for i in range(len(self.found_path)-1):
