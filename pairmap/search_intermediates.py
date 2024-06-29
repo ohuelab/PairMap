@@ -8,6 +8,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdchem import RWMol
 from collections import deque
+import copy
 
 class SearchIntermediates:
     def __init__(self, source_ligand, target_ligand, verbose=False, cap_ring_with_carbon=True, cap_ring_with_hydrogen=True, no_backward_search=False, intermediate_name_prefix='intermediate', use_seed = True, score_config=None, ionize=False, obabel_path='obabel'):
@@ -43,11 +44,11 @@ class SearchIntermediates:
 
     def simplex_search(self, direction='forward'):
         if direction=='forward':
-            source_ligand = self.source_ligand
-            target_ligand = self.target_ligand
+            source_ligand = copy.deepcopy(self.source_ligand)
+            target_ligand = copy.deepcopy(self.target_ligand)
         else:
-            source_ligand = self.target_ligand
-            target_ligand = self.source_ligand
+            source_ligand = copy.deepcopy(self.target_ligand)
+            target_ligand = copy.deepcopy(self.source_ligand)
 
         q = deque()
         q.append(source_ligand)

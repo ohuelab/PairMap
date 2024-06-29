@@ -9,7 +9,7 @@ import networkx as nx
 
 
 class MapGenerator:
-    def __init__(self, intermediate_list, optimal_path_mode = False, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, chunkScale = 10, source_node_index = 0, target_node_index = 1, jobs = 0, custum_score_matrix = None, verbose = False):
+    def __init__(self, intermediate_list, optimal_path_mode = False, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, CycleLinkThreshold = 0.6, forceOptimalPathLength = False, chunkScale = 10, squared_sum = True, source_node_index = 0, target_node_index = 1, jobs = 0, custum_score_matrix = None, verbose = False):
         """
         :param intermediate_list: List of RDKit molecules representing intermediates
         :param optimal_path_mode: Output map contains only the optimal path (default: False)
@@ -19,7 +19,10 @@ class MapGenerator:
         :param roughMaxPathLength: Maximum path length of the rough search (default: 2)
         :param roughScoreThreshold: Score threshold of the rough search (default: 0.5)
         :param minScoreThreshold: Minimum score threshold (default: 0.2)
+        :param CycleLinkThreshold: Score threshold for cycle links (default: 0.6)
+        :param forceOptimalPathLength: Set the length of the optimal path to the maximum path length (default: False)
         :param chunkScale: Parameter for chunk processing in the map generation (default: 10)
+        :param square_sum: Use the square sum of the scores in the path search (default: True)
         :param source_node_index: source node index in the intermediate list (default: 0)
         :param target_node_index: target node index in the intermediate list (default: 1)
         :param jobs: Number of jobs for parallel processing (default: 0)
@@ -52,13 +55,17 @@ class MapGenerator:
         self.roughScoreThreshold = roughScoreThreshold
 
         # Pairmap parameters
-        self.cycleLength = cycleLength
         self.maxPathLength = maxPathLength
+        self.cycleLength = cycleLength
         self.chunkScale = chunkScale
         self.minScoreThreshold = minScoreThreshold
+        self.CycleLinkThreshold = CycleLinkThreshold
+        self.forceOptimalPathLength = forceOptimalPathLength
+        self.squared_sum = squared_sum
 
         self.found_path = [source_node_index, target_node_index]
         self.found_links = [(source_node_index, target_node_index)]
+        self.cycle_links = []
 
     def make_optimal_path_graph(self):
         # graph only contains the optimal path
@@ -103,47 +110,60 @@ class MapGenerator:
 
         graph = self.make_graph()
         all_simple_paths = list(nx.all_simple_paths(graph, source_node_index, target_node_index, cutoff=self.maxOptimalPathLength))
+        if self.forceOptimalPathLength:
+            all_simple_paths = [path for path in all_simple_paths if len(path)==self.maxOptimalPathLength+1]
         if len(all_simple_paths) == 0:
             raise Exception('No path found, please check the input.')
         path_scores_list = []
         for path in all_simple_paths:
             path_scores = [graph.get_edge_data(path[i],path[i+1])['score'] for i in range(len(path)-1)]
             path_scores_list.append(sorted(path_scores))
-
-        sum_scores = [np.sum(1/(np.array(scores)+1e-5)) for scores in path_scores_list]
+        if self.squared_sum:
+            sum_scores = [np.sum(1/(np.array(scores)**2+1e-5)) for scores in path_scores_list]
+        else:
+            sum_scores = [np.sum(scores) for scores in path_scores_list]
         best_idx = np.argmin(sum_scores)
         found_path = all_simple_paths[best_idx]
         self.found_path = found_path
         self.found_links = [(found_path[i], found_path[i+1]) if found_path[i]<found_path[i+1] else (found_path[i+1], found_path[i]) for i in range(len(found_path)-1)]
-
+        # Paths with a score greater than the threshold do not need to be cycled.
+        self.cycle_links = [(u,v) for u,v in self.found_links if graph.get_edge_data(u,v)['score'] < self.CycleLinkThreshold]
+        self.cycle_nodes = [node for node in found_path[1:-1] if any([node in link for link in self.cycle_links])]
         return self.found_path
 
-    def get_cycled_nodes(self, graph):
-        all_simple_cycles = list(nx.simple_cycles(graph, length_bound=self.cycleLength))
-        unique_nodes = set()
-        for path in all_simple_cycles:
-            if any([node in self.found_path[1:-1] for node in path]):
-                unique_nodes.update(path)
-        cycled_nodes = set(self.found_path).intersection(unique_nodes)
-        return cycled_nodes
-
     def get_cycled_edges(self, graph):
-        bridges = find_bridges(graph)
-        cycled_found_links = set(self.found_links).difference(bridges)
-        return cycled_found_links
+        cycled_edges = set()
+        for u,v in self.cycle_links:
+            removed_data = graph[u][v]
+            graph.remove_edge(u,v)
+            all_simple_paths = list(nx.all_simple_paths(graph, u, v, cutoff=self.cycleLength-1))
+            if len(all_simple_paths) > 0:
+                cycled_edges.add((u,v))
+            graph.add_edge(u,v, **removed_data)
+        return cycled_edges
 
-    def check_node_cycle_covering(self, graph):
-        return len(self.initialCycledNodesSet.difference(self.get_cycled_nodes(graph)))==0
+    def check_optimal_path(self, graph):
+        keep_optimal_links = True
+        for u,v in self.found_links:
+            if not graph.get_edge_data(u,v):
+                keep_optimal_links = False
+                break
+        return keep_optimal_links
 
-    def check_edge_cycle_covering(self, graph):
-        return len(self.initialCycledEdgesSet.difference(self.get_cycled_edges(graph)))==0
+    def check_cycle_covering(self, graph):
+        cycled_edges = self.get_cycled_edges(graph)
+        if self.verbose:
+            print("======")
+            print('cycled edges:', cycled_edges)
+        edge_cycle_covering = len(self.initialCycledEdgesSet.difference(cycled_edges))==0
+        return edge_cycle_covering
 
     def check_constraints(self, graph):
         constraintsMet = True
         if constraintsMet:
-            constraintsMet = self.check_node_cycle_covering(graph)
+            constraintsMet = self.check_optimal_path(graph)
         if constraintsMet:
-            constraintsMet = self.check_edge_cycle_covering(graph)
+            constraintsMet = self.check_cycle_covering(graph)
         return constraintsMet
 
     def get_main_subgraph(self, graph):
@@ -170,19 +190,6 @@ class MapGenerator:
         is_invalid = not all([node in subgraph.nodes for node in self.found_path])
         if is_invalid:
             raise Exception('invalid graph: get_reachable_subgraph')
-        return subgraph
-
-    def get_cycle_subgraph(self, graph):
-        all_simple_cycles = list(nx.simple_cycles(graph, length_bound=self.cycleLength))
-        unique_nodes = set()
-        unique_nodes.update(self.found_path)
-        for path in all_simple_cycles:
-            if any([node in self.found_path for node in path]):
-                unique_nodes.update(path)
-        subgraph = graph.subgraph(unique_nodes)
-        is_invalid = not all([node in subgraph.nodes for node in self.found_path])
-        if is_invalid:
-            raise Exception('invalid graph: get_cycle_subgraph')
         return subgraph
 
     def generate_initial_graph(self):
@@ -244,9 +251,9 @@ class MapGenerator:
         else:
             # Remove edges in the chunk and check constraints
             subgraph.remove_edges_from(edge_chunk)
+
             exgraph = self.get_reachable_subgraph(subgraph)
-            exgraph = self.get_cycle_subgraph(exgraph)
-            exgraph = self.get_main_subgraph(exgraph)
+            exgraph = self.get_main_subgraph(exgraph).copy()
             is_invalid = not all([node in exgraph.nodes for node in self.found_path])
             if is_invalid:
                 for (i, j), d in zip(edge_chunk, data_chunk):
@@ -254,12 +261,14 @@ class MapGenerator:
                 return False
             satisfied = self.check_constraints(exgraph)
             if not satisfied:
+                if self.verbose and len(edge_chunk) == 1:
+                    print('Keep edge: {}'.format(edge_chunk[0]))
                 for (i, j), d in zip(edge_chunk, data_chunk):
                     subgraph.add_edge(i, j, **d)
                 return False
             if self.verbose:
                 print('Removed: {}'.format(len(edge_chunk)))
-            subgraph = exgraph.copy()
+            subgraph = exgraph
             if self.verbose:
                 print('#E={}, #N={}'.format(len(subgraph.edges()), len(subgraph)))
             self.tmp_subgraph = subgraph
@@ -299,15 +308,17 @@ class MapGenerator:
         data = [subgraph[i][j] for i, j, d in self.scoresList]
         chunk_size = self.chunkScale **int(np.log(len(self.scoresList))/np.log(self.chunkScale))
 
-        self.initialCycledNodesSet = self.get_cycled_nodes(subgraph)
-        self.initialCycledEdgesSet = self.get_cycled_edges(subgraph)
 
-        exgraph = self.get_reachable_subgraph(subgraph)
-        exgraph = self.get_cycle_subgraph(exgraph)
-        exgraph = self.get_main_subgraph(exgraph)
+        self.initialCycledEdgesSet = self.get_cycled_edges(subgraph)
+        if self.verbose:
+            print('Initial cycled nodes:', self.initialCycledNodesSet)
+            print('Initial cycled edges:', self.initialCycledEdgesSet)
+
+        exgraph = self.get_main_subgraph(subgraph)
+
         is_invalid = not all([node in exgraph.nodes for node in found_path])
         if is_invalid:
-            raise Exception('invalid initial graph: get_reachable_subgraph')
+            raise Exception('invalid initial graph')
         else:
             subgraph = exgraph.copy()
 
@@ -326,25 +337,12 @@ class MapGenerator:
                     data_chunk+=[data[crt]]
                 crt+=1
             self.chunk_process(edge_chunk, data_chunk, chunk_size, crt)
+            self.tmp_subgraph = self.get_main_subgraph(self.tmp_subgraph).copy()
 
-        if self.verbose:
-            print('Rebuild graph with no subgraphing')
-        tmp_graph = self.tmp_subgraph.copy()
-        self.scoresList = list(tmp_graph.edges(data='score'))
-        self.scoresList.sort(key=lambda entry: entry[2])
-        for u, v, _ in self.scoresList:
-            edge_data = tmp_graph.get_edge_data(u,v)
-            if edge_data == None or edge_data['found_path']:
-                continue
-            tmp_graph.remove_edge(u,v)
-            satisfied = self.check_constraints(tmp_graph)
-            if not satisfied:
-                tmp_graph.add_edge(u,v, **edge_data)
 
-        exgraph = tmp_graph.copy()
-        exgraph = self.get_main_subgraph(exgraph)
-        tmp_graph = exgraph
+        subgraph = self.tmp_subgraph.copy()
+        exgraph = self.get_reachable_subgraph(subgraph)
+        exgraph = self.get_main_subgraph(subgraph)
 
-        self.final_graph = tmp_graph.copy()
-
+        self.final_graph = exgraph.copy()
         return self.final_graph
