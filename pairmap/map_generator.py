@@ -9,7 +9,7 @@ import networkx as nx
 
 
 class MapGenerator:
-    def __init__(self, intermediate_list, optimal_path_mode = False, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, CycleLinkThreshold = 0.6, forceOptimalPathLength = False, chunkScale = 10, squared_sum = True, source_node_index = 0, target_node_index = 1, jobs = 0, custum_score_matrix = None, verbose = False):
+    def __init__(self, intermediate_list, optimal_path_mode = False, maxPathLength = 4, cycleLength = 3, maxOptimalPathLength = 3, roughMaxPathLength = 2, roughScoreThreshold = 0.5, minScoreThreshold = 0.2, CycleLinkThreshold = 0.6, forceOptimalPathLength = False, chunkScale = 10, squared_sum = True, source_node_index = 0, target_node_index = 1, jobs = 0, custom_score_matrix = None, verbose = False):
         """
         :param intermediate_list: List of RDKit molecules representing intermediates
         :param optimal_path_mode: Output map contains only the optimal path (default: False)
@@ -26,19 +26,19 @@ class MapGenerator:
         :param source_node_index: source node index in the intermediate list (default: 0)
         :param target_node_index: target node index in the intermediate list (default: 1)
         :param jobs: Number of jobs for parallel processing (default: 0)
-        :param custum_score_matrix: original score matrix, if None, the score matrix is calculated from the intermediate list (default: None)
+        :param custom_score_matrix: original score matrix, if None, the score matrix is calculated from the intermediate list (default: None)
         :param verbose: verbose mode (default: False)
         """
         self.intermediate_list = intermediate_list
         self.intermediate_names = [intermediate.GetProp('_Name') if intermediate.HasProp('_Name')==1  else f'intermediate-{i:04d}' for i, intermediate in enumerate(intermediate_list)]
 
-        if custum_score_matrix is not None:
-            # check custum_score_matrix is square matrix
-            if len(custum_score_matrix) != len(intermediate_list):
+        if custom_score_matrix is not None:
+            # check custom_score_matrix is square matrix
+            if len(custom_score_matrix) != len(intermediate_list):
                 raise Exception('The size of the custom score matrix does not match the intermediate list.')
-            if len(custum_score_matrix[0]) != len(intermediate_list):
-                raise Exception('The custom score matrix must be a square matrix, but the size is {}x{}'.format(len(custum_score_matrix), len(custum_score_matrix[0])))
-            self.score_matrix = custum_score_matrix
+            if len(custom_score_matrix[0]) != len(intermediate_list):
+                raise Exception('The custom score matrix must be a square matrix, but the size is {}x{}'.format(len(custom_score_matrix), len(custom_score_matrix[0])))
+            self.score_matrix = custom_score_matrix
         else:
             self.score_matrix = None
         self.N = len(self.intermediate_list)

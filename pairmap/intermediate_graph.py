@@ -3,6 +3,20 @@ import numpy as np
 from operator import itemgetter
 import logging
 import itertools
+import copy
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+
+import lomap
+from lomap.dbmol import ecr
+from lomap import mcs
+
+from .utils import execute_ligand_preparation
+
+from .search_intermediates import SearchIntermediates
+from .map_generator import MapGenerator
+
 
 from .utils import find_bridges
 
@@ -436,9 +450,19 @@ class IntermediateGraphGen(object):
 
         return self.resultGraph
 
-from lomap.dbmol import ecr
-from lomap import mcs
-def get_similarity(moli, molj, options):
+
+def get_similarity(moli, molj, options = None):
+    moli, molj = copy.deepcopy(moli), copy.deepcopy(molj)
+    if options is None:
+        options = {
+            'time': 20,
+            'verbose': 'info',
+            'max3d': 1000.0,
+            'threed': False,
+            'element_change': True,
+            'seed': '',
+            'shift': True
+        }
     ecr_score = ecr(moli, molj)
     MC = mcs.MCS(
         moli, molj, time=options['time'],
@@ -456,15 +480,9 @@ def get_similarity(moli, molj, options):
     strict_scr = tmp_scr * 1  # MC.tmcsr(strict_flag=True)
     return strict_scr
 
-import lomap
-from .utils import execute_ligand_preparation
-from rdkit import Chem
-from rdkit.Chem import AllChem
-from .search_intermediates import SearchIntermediates
-from .map_generator import MapGenerator
-def test():
-    db_mol = lomap.DBMolecules("datasets/Merck-FEP-dataset/hif2a/mol2/", output=True)
-    similarity_threshold = 0.6
+def test(args):
+    db_mol = lomap.DBMolecules(args.input_dir, output=True)
+    similarity_threshold = args.similarity_threshold
 
     strict, loose = db_mol.build_matrices()
     nx_graph = db_mol.build_graph()
@@ -474,6 +492,10 @@ def test():
             new_graph.nodes[node]["intermediate"] = False
     node_mols = {node:AllChem.RemoveHs(db_mol[node].getMolecule()) for node in nx_graph.nodes}
     options = db_mol.options
+
+    options["chunk_mode"]=True
+    options["chunk_scale"]=10
+    options["node_mode"]=False
     added_edges = []
     new_graphs = []
     new_graphs.append(new_graph.copy())
@@ -496,17 +518,23 @@ def test():
             added_edges.append((edge[0], edge[1]))
             source_node, target_node = edge
             found = True
+            break
         if not found:
             print("No more edges to add")
             break
 
         source_ligand = node_mols[source_node]
         target_ligand = node_mols[target_node]
-        search_intm = SearchIntermediates(source_ligand, target_ligand)
+        search_intm = SearchIntermediates(source_ligand, target_ligand, max_intermediate=50)
         intermediates = search_intm.search()
-        intermediates_avail = execute_ligand_preparation(intermediates, extract_same_formal_charge=True)
-
-        mapGen = MapGenerator(intermediates_avail, jobs=-1, maxOptimalPathLength=4, optimal_path_mode=True, minScoreThreshold=0)
+        intermediates_avail = intermediates # execute_ligand_preparation(intermediates, extract_same_formal_charge=True)
+        for m in intermediates_avail:
+            Chem.AssignStereochemistryFrom3D(m)
+        if Chem.MolToSmiles(source_ligand) != Chem.MolToSmiles(intermediates_avail[0]):
+            raise ValueError("Source ligand has changed")
+        if Chem.MolToSmiles(target_ligand) != Chem.MolToSmiles(intermediates_avail[1]):
+            raise ValueError("Target ligand has changed")
+        mapGen = MapGenerator(intermediates_avail, jobs=-1, maxOptimalPathLength=4, optimal_path_mode=True, minScoreThreshold=0.2)
         pairgraph = mapGen.build_map()
 
         exisiting_smiles = [Chem.MolToSmiles(node_mols[node]) for node in new_graph.nodes]
@@ -522,29 +550,38 @@ def test():
             if smiles not in exisiting_smiles:
                 new_graph.add_node(node_idx, ID=node_idx, fname_comp = generated_intermediate_names[i], active=False, intermediate=True)
                 node_remapping[i]=node_idx
+                mol.SetProp("_Name", "Intermediate-{:03d}".format(node_idx))
                 additional_intermediates[i] = mol
                 node_mols[node_idx] = mol
                 node_idx+=1
             else:
-                node_remapping[i]=exisiting_smiles.index(smiles)
+                found_node = False
+                for node in new_graph.nodes:
+                    if Chem.MolToSmiles(node_mols[node]) == smiles:
+                        node_remapping[i] = node
+                        found_node = True
+                        break
+                if not found_node:
+                    raise ValueError("Node not found")
+
         if not additional_intermediates:
             print("No additional intermediates to add")
             break
 
         # Add intermiediate edges
         for u,v in pairgraph.edges:
-            similarity = get_similarity(node_mols[u], node_mols[v], node_mols[node])
+            similarity = get_similarity(intermediates_avail[u], intermediates_avail[v], options)
             new_graph.add_edge(node_remapping[u], node_remapping[v], similarity=similarity, strict_flag=True)
 
         # Add edges with additional intermediates
-        for i in additional_intermediates:
-            u=node_remapping[i]
-            for v in pairgraph.nodes:
-                if u ==v or pairgraph.get_edge_data(u,v):
-                    print(u,v)
+        for u in new_graph:
+            for j in additional_intermediates:
+                v = node_remapping[j]
+                if u==v or new_graph.get_edge_data(u,v):
                     continue
-                similarity = get_similarity(node_mols[u], node_mols[v], options)
-                new_graph.add_edge(u,v, similarity=similarity, strict_flag=True)
+                similarity = get_similarity(node_mols[u], node_mols[v])
+                if similarity>0.4:
+                    new_graph.add_edge(u, v, similarity=similarity, strict_flag=True)
 
         # Add edges with additional intermediates
         new_graph = IntermediateGraphGen(new_graph, options).get_graph()
@@ -555,3 +592,19 @@ def test():
         print("Number of nodes: ", len(new_graph.nodes))
         print("Number of edges: ", len(new_graph.edges))
         print("Numeber of additional intermediates: ", len(additional_intermediates))
+        print("=====================================")
+
+    # Save
+    import os
+    import pickle
+    with open(os.path.join(args.output_dir, "intermediate_graphs.pkl"), "wb") as f:
+        pickle.dump(new_graphs, f)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", type=str, default="data")
+    parser.add_argument("--similarity_threshold", type=float, default=0.6)
+    parser.add_argument("--output_dir", type=str, default="output")
+    args = parser.parse_args()
+    test(args)

@@ -11,7 +11,9 @@ from collections import deque
 import copy
 
 class SearchIntermediates:
-    def __init__(self, source_ligand, target_ligand, verbose=False, cap_ring_with_carbon=True, cap_ring_with_hydrogen=True, no_backward_search=False, intermediate_name_prefix='intermediate', use_seed = True, score_config=None, ionize=False, obabel_path='obabel'):
+    def __init__(self, source_ligand, target_ligand, verbose=False, is_atom_modfication_enabled = True, cap_ring_with_carbon=True, cap_ring_with_hydrogen=True, no_backward_search=False, intermediate_name_prefix='intermediate', use_seed = True, score_config=None, ionize=False, obabel_path='obabel', max_intermediate=100):
+        source_ligand = copy.deepcopy(source_ligand)
+        target_ligand = copy.deepcopy(target_ligand)
         self.source_ligand = RWMol(AllChem.RemoveHs(source_ligand))
         self.target_ligand = RWMol(AllChem.RemoveHs(target_ligand))
 
@@ -28,13 +30,16 @@ class SearchIntermediates:
         self.formal_charge = formal_charge(self.source_ligand)
 
 
-        self.generator = IntermediateGenerator(cap_ring_with_carbon=cap_ring_with_carbon, cap_ring_with_hydrogen=cap_ring_with_hydrogen, verbose=verbose)
+        self.generator = IntermediateGenerator(is_atom_modfication_enabled = is_atom_modfication_enabled,cap_ring_with_carbon=cap_ring_with_carbon, cap_ring_with_hydrogen=cap_ring_with_hydrogen, verbose=verbose)
 
         self.baseMC = self.MCS(source_ligand, target_ligand)
         mcs = self.baseMC.mcs_mol
         self.seedSmarts = Chem.MolToSmarts(mcs) if self.use_seed else ''
+        self.max_intermediate = max_intermediate
 
     def MCS(self, source_ligand, target_ligand):
+        source_ligand = copy.deepcopy(source_ligand)
+        target_ligand = copy.deepcopy(target_ligand)
         try:
             MC = MCS(source_ligand, target_ligand, **self.score_config, seed = self.seedSmarts)
         except:
@@ -58,7 +63,7 @@ class SearchIntermediates:
         target_index = 1
         smiles_list = [intermediate_info_list[source_index]['smiles'], intermediate_info_list[target_index]['smiles']]
         traces=[[source_index, target_index]]
-        while len(q)>0:
+        while len(q)>0 and len(intermediate_info_list) < self.max_intermediate:
             ligand = q.popleft()
             ligand = RWMol(ligand)
             smiles = Chem.MolToSmiles(ligand)
@@ -77,12 +82,14 @@ class SearchIntermediates:
                 intermediate_index = smiles_list.index(info['smiles'])
                 traces.append([ligand_index, intermediate_index])
                 traces.append([intermediate_index, target_index])
+                if len(intermediate_info_list) >= self.max_intermediate:
+                    break
         return intermediate_info_list, traces
 
     def get_intermediate_info(self, ligand):
         # DEBUG: smiles must be canonical
         if Chem.MolToSmiles(Chem.MolFromSmiles(Chem.MolToSmiles(ligand))) != Chem.MolToSmiles(ligand):
-            raise ValueError('smiles must be canonical, please report if this error occurs')
+            raise ValueError('smiles must be canonical, please report if this error occurs: {} != {}'.format(Chem.MolToSmiles(Chem.MolFromSmiles(Chem.MolToSmiles(ligand))), Chem.MolToSmiles(ligand)))
         smiles = Chem.MolToSmiles(ligand)
 
         return {

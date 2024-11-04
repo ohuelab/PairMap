@@ -2,6 +2,7 @@ import numpy as np
 import itertools
 from lomap.mcs import MCS
 from rdkit.Chem import rdFMCS
+import copy
 
 from tqdm import tqdm
 
@@ -47,6 +48,8 @@ def score_function(mola, molb, options = None):
     Returns:
         tuple: A tuple containing the MCS object and the calculated score.
     """
+    mola = copy.deepcopy(mola)
+    molb = copy.deepcopy(molb)
     ecr_score = ecr(mola,molb)
     if options is None:
         options = {'time':20, 'verbose':'info', 'max3d':0, 'threed':False}

@@ -48,6 +48,7 @@ class IntermediateGenerator:
             Chem.SanitizeMol(ligand)
             ligand = self.remove_atom_map(ligand)
             ligand = Chem.RemoveHs(ligand)
+            Chem.AssignStereochemistryFrom3D(ligand)
             return ligand
         except:
             return None
