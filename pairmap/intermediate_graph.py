@@ -487,6 +487,7 @@ def test(args):
     strict, loose = db_mol.build_matrices()
     nx_graph = db_mol.build_graph()
     new_graph = nx_graph.copy()
+    initial_num = len(new_graph.nodes)
     for node in new_graph:
         if new_graph.nodes[node].get("intermediate") is None:
             new_graph.nodes[node]["intermediate"] = False
@@ -500,6 +501,10 @@ def test(args):
     new_graphs = []
     new_graphs.append(new_graph.copy())
     while True:
+        intermediate_num = len(new_graph.nodes) - initial_num
+        if args.max_intermediate > 0 and intermediate_num > args.max_intermediate:
+            print("Max number of intermediates reached")
+            break
         bad_edges = []
         bad_sims = []
         for u,v,d in new_graph.edges(data=True):
@@ -605,6 +610,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, default="data")
     parser.add_argument("--similarity_threshold", type=float, default=0.6)
+    parser.add_argument("--max_intermediate", type=int, default=-1, help="Maximum number of intermediates to add. -1 means no limit")
     parser.add_argument("--output_dir", type=str, default="output")
     args = parser.parse_args()
     test(args)
