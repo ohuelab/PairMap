@@ -63,7 +63,7 @@ class SearchIntermediates:
         target_index = 1
         smiles_list = [intermediate_info_list[source_index]['smiles'], intermediate_info_list[target_index]['smiles']]
         traces=[[source_index, target_index]]
-        while len(q)>0 and len(intermediate_info_list) < self.max_intermediate:
+        while len(q)>0 and (self.max_intermediate <= 0 or len(intermediate_info_list) < self.max_intermediate):
             ligand = q.popleft()
             ligand = RWMol(ligand)
             smiles = Chem.MolToSmiles(ligand)
@@ -82,7 +82,7 @@ class SearchIntermediates:
                 intermediate_index = smiles_list.index(info['smiles'])
                 traces.append([ligand_index, intermediate_index])
                 traces.append([intermediate_index, target_index])
-                if len(intermediate_info_list) >= self.max_intermediate:
+                if self.max_intermediate > 0 and len(intermediate_info_list) >= self.max_intermediate:
                     break
         return intermediate_info_list, traces
 
