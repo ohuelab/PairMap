@@ -47,5 +47,5 @@ mapGen = MapGenerator(intermediates_avail, maxPathLength=4, cycleLength=3, maxOp
 You can run the sample as follows:
 
 ```
-python tests/test.py tests/intermediate_graph/P38/config.yaml
+python tests/test.py tests/intermediate_graph/TYK2/config.yaml
 ```

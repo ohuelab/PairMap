@@ -1,7 +1,0 @@
-input_dir: tests/intermediate_graph/P38/sdf_prep
-output_dir: tests/intermediate_graph/P38/output
-similarity_threshold: 0.4
-minScoreThreshold: 0.2
-roughScoreThreshold: 0.6
-is_atom_modfication_enabled: False
-cap_ring_with_carbon: False
