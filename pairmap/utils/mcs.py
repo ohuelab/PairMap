@@ -95,10 +95,6 @@ def get_score_matrix(mols, options = None, use_seed = True, jobs = 1):
                 score_matrix[i][j]=score
                 score_matrix[j][i]=score
 
-    # with Pool() as pool:
-    #     for i, j, score in tqdm(pool.imap_unordered(compute_score, pairs), total=len(pairs)):
-    #         score_matrix[i][j]=score
-    #         score_matrix[j][i]=score
     return score_matrix
 
 

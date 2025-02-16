@@ -98,6 +98,7 @@ class IntermediateGraphManager:
         self.config.setdefault("optimal_path_mode", True)
         self.config.setdefault("minScoreThreshold", 0.2)
         self.config.setdefault("verbose", True)
+        self.lomap_options = self.config.get("lomap_options", {})
 
         # Custom functions
         self.get_score_matrix = custom_get_score_matrix
@@ -128,6 +129,7 @@ class IntermediateGraphManager:
             minScoreThreshold=self.config["minScoreThreshold"],
             custom_score_matrix=custom_score_matrix,
             verbose=self.config["verbose"],
+            lomap_options=self.lomap_options
         )
         pairgraph = mapGen.build_map()
 
@@ -291,7 +293,7 @@ class IntermediateGraphManager:
             for u in new_graph:
                 for v in update_nodes:
                     if (u != v) and not new_graph.get_edge_data(u, v):
-                        sim_ = self.get_similarity(node_mols[u], node_mols[v], self.config)
+                        sim_ = self.get_similarity(node_mols[u], node_mols[v], self.lomap_options)
                         if sim_ > self.config["minScoreThreshold"]:
                             new_graph.add_edge(u, v, similarity=sim_, strict_flag=True)
 
@@ -377,6 +379,7 @@ class IntermediateGraphManager:
     def run(self):
         logger.info("Generating intermediate graph...")
         mols, df = self.generate_moldf(self.config["input_dir"])
+        logger.info("Number of bad edges: {}".format(len(df[df['BadEdge']])))
 
         logger.info("Running intermediate graph generation...")
         new_graphs, node_mols = self.run_from_moldf(mols, df)
@@ -397,7 +400,6 @@ class IntermediateGraphGen(object):
         self.subgraph = subgraph
         self.maxPathLength = options.get('max', 4)
         self.maxDistFromActive = options.get('max_dist_from_actives', self.maxPathLength)
-        self.similarityScoresLimit = options.get('cutoff', 0.0)
         self.requireCycleCovering = not options.get('allow_tree', False)
 
         if ignore_intermediates:
@@ -417,7 +419,6 @@ class IntermediateGraphGen(object):
         self.distanceToActiveFailures = 0
 
         self.chunk_mode = options.get('chunk_mode', True)
-        self.node_mode = options.get('node_mode', False)
 
         # Sort edges by similarity
         self.weightsList = sorted([(i, j, d['similarity']) for i, j, d in subgraph.edges(data=True)],

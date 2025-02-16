@@ -4,7 +4,6 @@ from rdkit import Chem
 from rdkit.Chem import MolStandardize
 
 import logging
-logging.disable(logging.INFO)
 
 HYDROGEN_ATOM = Chem.Atom(1)
 CARBON_ATOM = Chem.Atom(6)
