@@ -23,6 +23,7 @@ These dependencies will be automatically installed when you install PairMap usin
 
 ## Usage
 
+### Intermediate Generation
 ```python
 from pairmap import IntermediateGenerator
 source_ligand = Chem.MolFromMolFile("/path/to/source_ligand.mol")
@@ -39,4 +40,12 @@ intermediates_avail = execute_ligand_preparation(intermediates, obabel_path = ob
 # Generate map
 mapGen = MapGenerator(intermediates_avail, maxPathLength=4, cycleLength=3, maxOptimalPathLength=3, jobs=-1)
 
+```
+
+### Intermediate Graph Generation
+
+You can run the sample as follows:
+
+```
+python tests/test.py tests/intermediate_graph/P38/config.yaml
 ```
