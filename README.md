@@ -49,3 +49,6 @@ You can run the sample as follows:
 ```
 python tests/test.py tests/intermediate_graph/TYK2/config.yaml
 ```
+
+## Reference
+Furui K, Shimizu T, Akiyama Y, Kimura SR, Terada Y, Ohue M. PairMap: An Intermediate Insertion Approach for Improving the Accuracy of Relative Free Energy Perturbation Calculations for Distant Compound Transformations. _Journal of Chemical Information and Modeling_, 65(2): 705-721, 2025. https://doi.org/10.1021/acs.jcim.4c01634
