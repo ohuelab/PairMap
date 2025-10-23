@@ -31,7 +31,7 @@ target_ligand = Chem.MolFromMolFile("/path/to/target_ligand.mol")
 
 # Generate intermediates
 searchIntm = SearchIntermediates(source_ligand, target_ligand)
-intermediates = searchIntm.generate_intermediates()
+intermediates = searchIntm.search()
 
 # ligand preparation with openbabel and extract same formal charge
 obabel_path = "/path/to/obabel"
@@ -39,7 +39,7 @@ intermediates_avail = execute_ligand_preparation(intermediates, obabel_path = ob
 
 # Generate map
 mapGen = MapGenerator(intermediates_avail, maxPathLength=4, cycleLength=3, maxOptimalPathLength=3, jobs=-1)
-
+mapGen.build_map()
 ```
 
 ### Intermediate Graph Generation
