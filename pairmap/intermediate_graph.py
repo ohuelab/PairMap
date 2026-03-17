@@ -315,12 +315,26 @@ class IntermediateGraphManager:
                     new_graph, node_mols, node_remapping, additional_intermediates = out
 
             update_nodes = list(node_remapping.values())
-            for u in new_graph:
-                for v in update_nodes:
-                    if (u != v) and not new_graph.get_edge_data(u, v):
-                        sim_ = self.get_similarity(node_mols[u], node_mols[v], self.lomap_options)
-                        if sim_ > self.config["minScoreThreshold"]:
-                            new_graph.add_edge(u, v, similarity=sim_, strict_flag=True)
+            if self.get_score_matrix is not None:
+                # Batch: compute all-vs-all score matrix once; cached pairs return O(1)
+                update_set = set(update_nodes)
+                all_nodes = list(new_graph.nodes)
+                all_mols = [node_mols[n] for n in all_nodes]
+                score_matrix = self.get_score_matrix(all_mols, self.config, jobs=self.config["jobs"])
+                for i, u in enumerate(all_nodes):
+                    for j, v in enumerate(all_nodes):
+                        if v in update_set and u != v and not new_graph.get_edge_data(u, v):
+                            sim_ = score_matrix[i][j]
+                            if sim_ > self.config["minScoreThreshold"]:
+                                new_graph.add_edge(u, v, similarity=sim_, strict_flag=True)
+            else:
+                # Fallback: sequential get_similarity (backward compatible)
+                for u in new_graph:
+                    for v in update_nodes:
+                        if (u != v) and not new_graph.get_edge_data(u, v):
+                            sim_ = self.get_similarity(node_mols[u], node_mols[v], self.lomap_options)
+                            if sim_ > self.config["minScoreThreshold"]:
+                                new_graph.add_edge(u, v, similarity=sim_, strict_flag=True)
 
             # Prune again
             GGen = IntermediateGraphGen(new_graph, self.config)
