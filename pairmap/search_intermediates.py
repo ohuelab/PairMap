@@ -12,8 +12,7 @@ import copy
 
 class SearchIntermediates:
     def __init__(self, source_ligand, target_ligand, verbose=False, is_atom_modfication_enabled = True, cap_ring_with_carbon=True, cap_ring_with_hydrogen=True, no_backward_search=False, intermediate_name_prefix='intermediate', use_seed = True, score_config=None, ionize=False, obabel_path='obabel', max_intermediate=100):
-        source_ligand = copy.deepcopy(source_ligand)
-        target_ligand = copy.deepcopy(target_ligand)
+        # RemoveHs already returns a new molecule object, so deepcopy is not needed here
         self.source_ligand = RWMol(AllChem.RemoveHs(source_ligand))
         self.target_ligand = RWMol(AllChem.RemoveHs(target_ligand))
 
@@ -38,12 +37,10 @@ class SearchIntermediates:
         self.max_intermediate = max_intermediate
 
     def MCS(self, source_ligand, target_ligand):
-        source_ligand = copy.deepcopy(source_ligand)
-        target_ligand = copy.deepcopy(target_ligand)
         try:
-            MC = MCS(source_ligand, target_ligand, **self.score_config, seed = self.seedSmarts)
+            MC = MCS(copy.deepcopy(source_ligand), copy.deepcopy(target_ligand), **self.score_config, seed = self.seedSmarts)
         except:
-            MC = MCS(source_ligand, target_ligand, **self.score_config, seed = '')
+            MC = MCS(copy.deepcopy(source_ligand), copy.deepcopy(target_ligand), **self.score_config, seed = '')
         return MC
 
 
@@ -62,24 +59,27 @@ class SearchIntermediates:
         source_index = 0
         target_index = 1
         smiles_list = [intermediate_info_list[source_index]['smiles'], intermediate_info_list[target_index]['smiles']]
+        smiles_to_idx = {smiles_list[0]: 0, smiles_list[1]: 1}
         traces=[[source_index, target_index]]
         while len(q)>0 and (self.max_intermediate <= 0 or len(intermediate_info_list) < self.max_intermediate):
             ligand = q.popleft()
             ligand = RWMol(ligand)
             smiles = Chem.MolToSmiles(ligand)
-            ligand_index = smiles_list.index(smiles)
+            ligand_index = smiles_to_idx[smiles]
             MC = self.MCS(ligand, target_ligand)
             mcs_map = {a1:a2 for a1,a2 in MC.heavy_atom_mcs_map()}
             intermediates = self.generator.generate_intermediates(ligand, target_ligand, mcs_map)
             for intermediate in intermediates:
                 info = self.get_intermediate_info(intermediate)
-                if info['smiles'] not in smiles_list:
+                if info['smiles'] not in smiles_to_idx:
                     if self.verbose:
                         print('intermediate: {}'.format(info['smiles']))
+                    new_idx = len(smiles_list)
+                    smiles_to_idx[info['smiles']] = new_idx
                     smiles_list.append(info['smiles'])
                     intermediate_info_list.append(info)
                     q.append(intermediate)
-                intermediate_index = smiles_list.index(info['smiles'])
+                intermediate_index = smiles_to_idx[info['smiles']]
                 traces.append([ligand_index, intermediate_index])
                 traces.append([intermediate_index, target_index])
                 if self.max_intermediate > 0 and len(intermediate_info_list) >= self.max_intermediate:

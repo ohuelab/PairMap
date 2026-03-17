@@ -89,13 +89,13 @@ class MapGenerator:
         for i, name in enumerate(self.intermediate_names):
             graph.add_node(i)
             graph.nodes[i]['label'] = name
-            # set edges
-            for u, v in itertools.combinations(range(self.N), 2):
-                score = self.score_matrix[u][v]
-                round_score = np.round(score, decimals=2)
-                is_found_link = (u,v) in found_links or (v,u) in found_links
-                if round_score >= min_score or is_found_link:
-                    graph.add_edge(u, v, score=round_score)
+        # set edges (separated from node loop to avoid O(N^3) redundancy)
+        for u, v in itertools.combinations(range(self.N), 2):
+            score = self.score_matrix[u][v]
+            round_score = np.round(score, decimals=2)
+            is_found_link = (u,v) in found_links or (v,u) in found_links
+            if round_score >= min_score or is_found_link:
+                graph.add_edge(u, v, score=round_score)
         return graph
 
     def find_optimal_path(self):

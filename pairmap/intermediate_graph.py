@@ -29,6 +29,10 @@ logger.setLevel(logging.INFO)
 SOURCE_INDEX = 0
 TARGET_INDEX = 1
 
+# In-memory similarity cache: (smiles_a, smiles_b) -> float, where smiles_a <= smiles_b
+_similarity_cache: dict[tuple[str, str], float] = {}
+
+
 def get_similarity(moli, molj, options=None):
     if options is None:
         options = {
@@ -41,11 +45,20 @@ def get_similarity(moli, molj, options=None):
             'shift': True
         }
 
-    moli, molj = copy.deepcopy(moli), copy.deepcopy(molj)
-    ecr_score = ecr(moli, molj)
+    # Check cache first
+    smi_i = Chem.MolToSmiles(moli)
+    smi_j = Chem.MolToSmiles(molj)
+    opts_key = tuple(sorted(options.items())) if options else ()
+    pair_key = (smi_i, smi_j) if smi_i <= smi_j else (smi_j, smi_i)
+    cache_key = (pair_key, opts_key)
+    if cache_key in _similarity_cache:
+        return _similarity_cache[cache_key]
+
+    moli_copy, molj_copy = copy.deepcopy(moli), copy.deepcopy(molj)
+    ecr_score = ecr(moli_copy, molj_copy)
 
     MC = mcs.MCS(
-        moli, molj,
+        moli_copy, molj_copy,
         time=options.get('time', 20),
         verbose=options.get('verbose', 'info'),
         threed=options.get('threed', False),
@@ -59,6 +72,8 @@ def get_similarity(moli, molj, options=None):
     tmp_scr *= MC.sulfonamides_rule() * MC.heterocycles_rule() * MC.transmuting_methyl_into_ring_rule()
     tmp_scr *= MC.transmuting_ring_sizes_rule()
     strict_scr = tmp_scr * 1  # MC.tmcsr(strict_flag=True)
+
+    _similarity_cache[cache_key] = strict_scr
     return strict_scr
 
 
@@ -129,11 +144,15 @@ class IntermediateGraphManager:
             minScoreThreshold=self.config["minScoreThreshold"],
             custom_score_matrix=custom_score_matrix,
             verbose=self.config["verbose"],
-            lomap_options=self.lomap_options
+            lomap_options=self.lomap_options,
+            jobs=self.config["jobs"],
         )
         pairgraph = mapGen.build_map()
 
-        existing_smiles = [Chem.MolToSmiles(node_mols[n]) for n in new_graph.nodes]
+        existing_smiles_to_node = {
+            Chem.MolToSmiles(node_mols[n]): n for n in new_graph.nodes
+        }
+        existing_smiles = set(existing_smiles_to_node.keys())
         generated_intermediate_names = {
             i: data["label"] for i, data in pairgraph.nodes(data=True) if data.get("label")
         }
@@ -159,16 +178,14 @@ class IntermediateGraphManager:
                 mol.SetProp("_Name", f"Intermediate-{node_idx:03d}")
                 additional_intermediates[i] = mol
                 node_mols[node_idx] = mol
+                existing_smiles.add(smiles)
+                existing_smiles_to_node[smiles] = node_idx
                 node_idx += 1
             else:
-                found_node = False
-                for node in new_graph.nodes:
-                    if Chem.MolToSmiles(node_mols[node]) == smiles:
-                        node_remapping[i] = node
-                        found_node = True
-                        break
-                if not found_node:
+                found_node = existing_smiles_to_node.get(smiles)
+                if found_node is None:
                     raise ValueError("Intermediate node with existing SMILES not found in graph.")
+                node_remapping[i] = found_node
         return new_graph, node_mols, node_remapping, additional_intermediates
 
     def run_from_moldf(self, mols, df):
@@ -256,9 +273,11 @@ class IntermediateGraphManager:
             for m in intermediates_avail:
                 Chem.AssignStereochemistryFrom3D(m)
 
-            if Chem.MolToSmiles(source_ligand) != Chem.MolToSmiles(intermediates_avail[SOURCE_INDEX]):
+            source_smiles = Chem.MolToSmiles(source_ligand)
+            target_smiles = Chem.MolToSmiles(target_ligand)
+            if source_smiles != Chem.MolToSmiles(intermediates_avail[SOURCE_INDEX]):
                 raise ValueError("Source ligand changed after search.")
-            if Chem.MolToSmiles(target_ligand) != Chem.MolToSmiles(intermediates_avail[TARGET_INDEX]):
+            if target_smiles != Chem.MolToSmiles(intermediates_avail[TARGET_INDEX]):
                 raise ValueError("Target ligand changed after search.")
 
             out = self.generate_intermediate_path(node_mols, new_graph, intermediates_avail, self.config)
@@ -269,20 +288,22 @@ class IntermediateGraphManager:
             new_graph, node_mols, node_remapping, additional_intermediates = out
             if not additional_intermediates:
                 logger.info("Retrying with novel intermediates only.")
-                existing_smiles = [Chem.MolToSmiles(node_mols[n]) for n in new_graph.nodes]
                 existing_smiles2node = {Chem.MolToSmiles(node_mols[n]): n for n in new_graph.nodes}
+                existing_smiles_set = set(existing_smiles2node.keys())
                 intermediates_novel = []
 
                 for i, mol in enumerate(intermediates_avail):
                     if i in [SOURCE_INDEX, TARGET_INDEX]:
                         intermediates_novel.append(mol)
-                    elif Chem.MolToSmiles(mol) not in existing_smiles:
-                        intermediates_novel.append(mol)
                     else:
-                        intm_node = existing_smiles2node.get(Chem.MolToSmiles(mol))
-                        if (new_graph.get_edge_data(source_node, intm_node) is None and
-                                new_graph.get_edge_data(target_node, intm_node) is None):
+                        mol_smiles = Chem.MolToSmiles(mol)
+                        if mol_smiles not in existing_smiles_set:
                             intermediates_novel.append(mol)
+                        else:
+                            intm_node = existing_smiles2node.get(mol_smiles)
+                            if (new_graph.get_edge_data(source_node, intm_node) is None and
+                                    new_graph.get_edge_data(target_node, intm_node) is None):
+                                intermediates_novel.append(mol)
 
                 intermediates_avail = intermediates_novel
                 out = self.generate_intermediate_path(node_mols, new_graph, intermediates_avail, self.config)
