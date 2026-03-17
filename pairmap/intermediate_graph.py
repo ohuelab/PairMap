@@ -29,11 +29,7 @@ logger.setLevel(logging.INFO)
 SOURCE_INDEX = 0
 TARGET_INDEX = 1
 
-# In-memory similarity cache: (smiles_a, smiles_b) -> float, where smiles_a <= smiles_b
-_similarity_cache: dict[tuple[str, str], float] = {}
-
-
-def get_similarity(moli, molj, options=None):
+def get_similarity(moli, molj, options=None, cache=None):
     if options is None:
         options = {
             'time': 20,
@@ -51,8 +47,8 @@ def get_similarity(moli, molj, options=None):
     opts_key = tuple(sorted(options.items())) if options else ()
     pair_key = (smi_i, smi_j) if smi_i <= smi_j else (smi_j, smi_i)
     cache_key = (pair_key, opts_key)
-    if cache_key in _similarity_cache:
-        return _similarity_cache[cache_key]
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
 
     moli_copy, molj_copy = copy.deepcopy(moli), copy.deepcopy(molj)
     ecr_score = ecr(moli_copy, molj_copy)
@@ -73,7 +69,8 @@ def get_similarity(moli, molj, options=None):
     tmp_scr *= MC.transmuting_ring_sizes_rule()
     strict_scr = tmp_scr * 1  # MC.tmcsr(strict_flag=True)
 
-    _similarity_cache[cache_key] = strict_scr
+    if cache is not None:
+        cache[cache_key] = strict_scr
     return strict_scr
 
 
@@ -118,7 +115,14 @@ class IntermediateGraphManager:
         # Custom functions
         self.get_score_matrix = custom_get_score_matrix
         self.execute_ligand_preparation = custom_execute_ligand_preparation
-        self.get_similarity = custom_get_similarity or get_similarity
+        self._similarity_cache: dict = {}
+        if custom_get_similarity:
+            self.get_similarity = custom_get_similarity
+        else:
+            _cache = self._similarity_cache
+            def _cached_get_similarity(moli, molj, options=None):
+                return get_similarity(moli, molj, options, cache=_cache)
+            self.get_similarity = _cached_get_similarity
 
     def load_config(self, config_file):
         """
